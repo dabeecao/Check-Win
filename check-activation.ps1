@@ -140,6 +140,15 @@ $MSG = @{
         HwidGenericWarn = "PHAT HIEN KHOA RETAIL GENERIC HWID ({0}): May dang dung khoa mac dinh cua MAS HWID nhung BIOS khong co san khoa ban quyen OEM mac dinh."
         BiosMsdmFound = "Tim thay khoa OEM nhung trong BIOS: {0}"
         BiosMsdmNotFound = "Khong tim thay khoa OEM trong BIOS (Co the day la may tu lap rap hoac khong co ban quyen kem theo mainboard)."
+        
+        # Service status check keys
+        SvcHeader = "KIEM TRA CAC DICH VU HE THONG COT LOI"
+        SvcDisabledWarn = "PHAT HIEN DICH VU '{0}' ({1}) DANG BI VO HIEU HOA (Disabled). Day la dau hieu cho thay he thong da bi can thiep de tranh kiem tra ban quyen hoac chan quet bao mat."
+        SvcNormal = "Dich vu '{0}' ({1}) dang o trang thai san sang."
+        SvcNotFound = "Khong tim thay dich vu '{0}' ({1}) tren he thong."
+        SvcPromptEnable = "Ban co muon tu dong bat va khoi chay dich vu '{0}' khong? (Y/N): "
+        SvcEnableSuccess = "Da kich hoat va khoi chay thanh cong dich vu '{0}'."
+        SvcEnableFail = "Khong the bat hoac khoi chay dich vu '{0}'. Loi: {1}"
     }
     EN = @{
         HeaderScan = "STARTING WINDOWS LICENSE AND CRACK DETECTION SCAN"
@@ -227,6 +236,15 @@ $MSG = @{
         HwidGenericWarn = "DETECTED RETAIL GENERIC HWID KEY ({0}): The active key matches the public MAS HWID key, and no native BIOS OEM key is embedded in hardware."
         BiosMsdmFound = "Embedded BIOS OEM key found: {0}"
         BiosMsdmNotFound = "No embedded BIOS OEM key found (This might be a custom-built computer or shipped without pre-activated Windows)."
+        
+        # Service status check keys
+        SvcHeader = "CRITICAL SYSTEM SERVICES AUDIT"
+        SvcDisabledWarn = "DETECTED THAT SERVICE '{0}' ({1}) IS DISABLED. This is a strong indicator of system tampering to bypass licensing or block security scans."
+        SvcNormal = "Service '{0}' ({1}) status is normal."
+        SvcNotFound = "Service '{0}' ({1}) not found on the system."
+        SvcPromptEnable = "Do you want to automatically enable and start service '{0}'? (Y/N): "
+        SvcEnableSuccess = "Successfully enabled and started service '{0}'."
+        SvcEnableFail = "Could not enable or start service '{0}'. Error: {1}"
     }
 }
 
@@ -262,6 +280,51 @@ if (-not $isAdmin) {
     Write-Warn $M.AdminWarn
 } else {
     Write-Success $M.AdminSuccess
+}
+
+# 2.5. KIEM TRA DICH VU HE THONG COT LOI (CRITICAL SYSTEM SERVICES AUDIT)
+Write-Header $M.SvcHeader
+
+$criticalServices = @(
+    @{ Name = "winmgmt"; Desc = "Windows Management Instrumentation (WMI)"; Critical = $true }
+    @{ Name = "sppsvc"; Desc = "Software Protection"; Critical = $false }
+)
+
+foreach ($svc in $criticalServices) {
+    $service = Get-Service -Name $svc.Name -ErrorAction SilentlyContinue
+    if ($service) {
+        if ($service.StartType -eq "Disabled") {
+            $msg = $M.SvcDisabledWarn -f $svc.Name, $svc.Desc
+            Write-Danger $msg
+            
+            $resolved = $false
+            if ($isAdmin) {
+                $response = Read-Host ($M.SvcPromptEnable -f $svc.Name)
+                if ($response -eq "Y" -or $response -eq "y" -or $response -eq "Yes" -or $response -eq "yes") {
+                    try {
+                        Set-Service -Name $svc.Name -StartupType Automatic -ErrorAction Stop
+                        Start-Service -Name $svc.Name -ErrorAction Stop
+                        Write-Success ($M.SvcEnableSuccess -f $svc.Name)
+                        $resolved = $true
+                    } catch {
+                        Write-Danger ($M.SvcEnableFail -f $svc.Name, $_.Exception.Message)
+                    }
+                }
+            }
+            
+            if (-not $resolved) {
+                $Report.CrackDetections += @{ 
+                    Path = "Service: $($svc.Name)"
+                    Target = "$($svc.Desc) is Disabled (Bypass/Tampering Indicator)"
+                    Type = "Service" 
+                }
+            }
+        } else {
+            Write-Success ($M.SvcNormal -f $svc.Name, $svc.Desc)
+        }
+    } else {
+        Write-Danger ($M.SvcNotFound -f $svc.Name, $svc.Desc)
+    }
 }
 
 # 3. THU THAP THONG TIN HE DIEU HANH
